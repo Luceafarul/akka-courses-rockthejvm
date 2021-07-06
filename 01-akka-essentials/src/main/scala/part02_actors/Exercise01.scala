@@ -48,6 +48,7 @@ object Exercise01 extends App {
     import BankAccount._
     var balance = initialBalance
 
+    // TODO: add validation for amount < 0 in Deposit and Withdraw
     override def receive: Receive = {
       case Deposit(amount, ref) =>
         balance += amount
