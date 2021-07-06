@@ -28,6 +28,29 @@ object ChangingActorBehavior extends App {
     val SAD = "Sad"
   }
 
+  class StatelessFussyKid extends Actor {
+    import FussyKid._
+    import Mom._
+
+    override def receive: Receive = happyReceive
+
+    def happyReceive: Receive = {
+      case Food(VEGETABLE) => context.unbecome()
+      case Food(CHOCOLATE) => context.become(happyReceive, false)
+      case Ask(message) =>
+        println(s"[${self.path.name}] receive question: $message")
+        sender() ! KidAccept
+    }
+
+    def sadReceive: Receive = {
+      case Food(VEGETABLE) => context.become(sadReceive, false)
+      case Food(CHOCOLATE) => context.unbecome()
+      case Ask(message) =>
+        println(s"[${self.path.name}] receive question: $message")
+        sender() ! KidReject
+    }
+  }
+
   class Mom extends Actor {
     import Mom._
     import FussyKid._
@@ -35,6 +58,9 @@ object ChangingActorBehavior extends App {
     override def receive: Receive = {
       case Start(kidRef) =>
         kidRef ! Food(VEGETABLE)
+        kidRef ! Food(VEGETABLE)
+        kidRef ! Food(CHOCOLATE)
+        kidRef ! Food(CHOCOLATE)
         kidRef ! Ask("Do you want to play?")
       case KidAccept => println(s"[${self.path.name}] Yay, my kid is happy!")
       case KidReject => println(s"[${self.path.name}] My kid is sad, but as he's healthy!")
@@ -52,7 +78,9 @@ object ChangingActorBehavior extends App {
 
   val system = ActorSystem("changing-actor-behavior")
   val fussyKid = system.actorOf(Props[FussyKid], "kid")
+  val statelessFussyKid = system.actorOf(Props[FussyKid], "stateless-kid")
   val mom = system.actorOf(Props[Mom], "mom")
 
-  mom ! Start(fussyKid)
+//  mom ! Start(fussyKid)
+  mom ! Start(statelessFussyKid)
 }
