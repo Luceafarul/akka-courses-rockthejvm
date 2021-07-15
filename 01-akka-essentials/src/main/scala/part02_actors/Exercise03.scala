@@ -45,7 +45,7 @@ object Exercise03 extends App {
         }
       case WordCountReply(workerRef, wordCount) =>
         println(s"Word count in ... $wordCount")
-        if (tasks.nonEmpty && workers.nonEmpty) {
+        if (tasks.nonEmpty) {
           workerRef ! WordCountTask(tasks.head)
           context.become(workersReady(workers, tasks.tail))
         } else {
@@ -64,12 +64,9 @@ object Exercise03 extends App {
 
     override def receive: Receive = {
       case WordCountTask(text) =>
-        if (text.isEmpty) sender() ! WordCountReply(self, 0)
-        else {
-          println(s"${self.path.name}: counting words...")
-          val wordCount = text.split(" ").length
-          sender() ! WordCountReply(self, wordCount)
-        }
+        println(s"${self.path.name}: counting words...")
+        val wordCount = text.split(" ").length
+        sender() ! WordCountReply(self, wordCount)
     }
   }
 
