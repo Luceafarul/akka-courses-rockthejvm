@@ -10,7 +10,7 @@ object ActorLoggingExample extends App {
     val logger = Logging(context.system, this)
 
     // 1. DEBUG
-    // 2. INFO
+    // 2. INFO - default in akka
     // 3. WARNING/WARN
     // 4. ERROR
     override def receive: Receive = {

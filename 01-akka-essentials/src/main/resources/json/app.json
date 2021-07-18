@@ -1,0 +1,6 @@
+{
+  "message": "Message from JSON config file",
+  "akka": {
+    "loglevel": "DEBUG"
+  }
+}
