@@ -6,6 +6,7 @@ import akka.actor.{
   ActorRef,
   ActorSystem,
   Cancellable,
+  FSM,
   Props
 }
 import akka.testkit.{ImplicitSender, TestKit}
@@ -27,8 +28,16 @@ class FSMSpec
   override def afterAll(): Unit = TestKit.shutdownActorSystem(system)
 
   "A VendingMachine" should {
+    runTestSuite(Props[VendingMachine])
+  }
+
+  "A VendingMachineFSM" should {
+    runTestSuite(Props[VendingMachineFSM])
+  }
+
+  def runTestSuite(props: Props): Unit = {
     "error when not initialized" in {
-      val vendingMachine = system.actorOf(Props[VendingMachine])
+      val vendingMachine = system.actorOf(props)
 
       vendingMachine ! VendingMachine.RequestProduct("Cola")
 
@@ -36,7 +45,7 @@ class FSMSpec
     }
 
     "report a product not available" in {
-      val vendingMachine = system.actorOf(Props[VendingMachine])
+      val vendingMachine = system.actorOf(props)
 
       vendingMachine ! VendingMachine.Initialize(
         Map("Cola" -> 2, "Sprite" -> 0),
@@ -51,8 +60,8 @@ class FSMSpec
       expectMsg(VendingMachine.VendingError("ProductNotAvailable"))
     }
 
-    "throw ReceiveMoneyTimeout if money not inserted" in {
-      val vendingMachine = system.actorOf(Props[VendingMachine])
+    "throw ReceiveTimeout if money not inserted" in {
+      val vendingMachine = system.actorOf(props)
 
       vendingMachine ! VendingMachine.Initialize(
         inventory = Map("Cola" -> 2),
@@ -69,7 +78,7 @@ class FSMSpec
     }
 
     "handle the reception of partial money" in {
-      val vendingMachine = system.actorOf(Props[VendingMachine])
+      val vendingMachine = system.actorOf(props)
 
       vendingMachine ! VendingMachine.Initialize(
         inventory = Map("Cola" -> 2),
@@ -90,7 +99,7 @@ class FSMSpec
     }
 
     "deliver product that was fully payed" in {
-      val vendingMachine = system.actorOf(Props[VendingMachine])
+      val vendingMachine = system.actorOf(props)
 
       vendingMachine ! VendingMachine.Initialize(
         inventory = Map("Cola" -> 2),
@@ -106,7 +115,7 @@ class FSMSpec
     }
 
     "deliver product that was overpay and return change" in {
-      val vendingMachine = system.actorOf(Props[VendingMachine])
+      val vendingMachine = system.actorOf(props)
 
       vendingMachine ! VendingMachine.Initialize(
         inventory = Map("Cola" -> 2),
@@ -227,5 +236,121 @@ object FSMSpec {
 
     final case class VendingError(reason: String)
     case object ReceiveMoneyTimeout
+  }
+
+  /**
+    * How to using FSM:
+    * Step 1. Define the states and the data of the actor
+    */
+  class VendingMachineFSM
+      extends FSM[VendingMachineFSM.State, VendingMachineFSM.Data] {
+
+    import VendingMachine._
+    import VendingMachineFSM._
+
+    implicit val executionContext: ExecutionContext = context.dispatcher
+
+    startWith(Idle, Uninitialized)
+
+    when(Idle) {
+      case Event(Initialize(inventory, prices), Uninitialized) =>
+        goto(Operational) using Initialized(inventory, prices)
+      case _ =>
+        sender() ! VendingError("MachineNotInitialized")
+        stay()
+    }
+
+    when(Operational) {
+      case Event(RequestProduct(product), Initialized(inventory, prices)) =>
+        inventory.get(product) match {
+          case None | Some(0) =>
+            sender() ! VendingError("ProductNotAvailable")
+            stay()
+          case Some(_) =>
+            val price = prices(product)
+            sender() ! Instruction(s"Please insert $price dollars")
+            goto(WaitForMoney) using WaitForMoney(
+              inventory,
+              prices,
+              product,
+              money = 0,
+              sender()
+            )
+        }
+    }
+
+    when(WaitForMoney, stateTimeout = 1 second) {
+      case Event(
+            StateTimeout,
+            WaitForMoney(inventory, prices, _, money, requester)
+          ) =>
+        requester ! VendingError("RequestTimeout")
+        if (money > 0) requester ! GiveBackChange(money)
+        goto(Operational) using Initialized(inventory, prices)
+      case Event(
+            ReceiveMoney(amount),
+            WaitForMoney(
+              inventory,
+              prices,
+              product,
+              money,
+              requester
+            )
+          ) =>
+        val price = prices(product)
+        if (amount + money >= price) {
+          requester ! Deliver(product)
+
+          if (amount + money - price > 0)
+            requester ! GiveBackChange(amount + money - price)
+          val quantityUpdated = inventory(product) - 1
+          val inventoryUpdated = inventory + (product -> quantityUpdated)
+          goto(Operational) using Initialized(inventoryUpdated, prices)
+        } else {
+          val remainingMoney = price - money - amount
+          requester ! Instruction(s"Please insert $remainingMoney dollars")
+          stay() using WaitForMoney(
+            inventory,
+            prices,
+            product,
+            money + amount,
+            requester
+          )
+        }
+    }
+
+    whenUnhandled {
+      case Event(_, _) =>
+        sender() ! VendingError("CommandNotFound")
+        stay()
+    }
+
+    onTransition {
+      case stateA -> stateB =>
+        log.info(s"Transitioning state from $stateA to $stateB")
+    }
+
+    initialize()
+  }
+
+  object VendingMachineFSM {
+    trait State
+    case object Idle extends State
+    case object Operational extends State
+    case object WaitForMoney extends State
+
+    trait Data
+    case object Uninitialized extends Data
+    final case class Initialized(
+        inventory: Map[String, Int],
+        prices: Map[String, Int]
+    ) extends Data
+    final case class WaitForMoney(
+        inventory: Map[String, Int],
+        prices: Map[String, Int],
+        product: String,
+        money: Int,
+        requester: ActorRef
+    ) extends Data
   }
 }
